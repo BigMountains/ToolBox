@@ -1,136 +1,159 @@
 package com.czl.tools.utils;
 
 import com.alibaba.fastjson.JSONObject;
-import com.google.gson.JsonObject;
-import com.google.gson.annotations.JsonAdapter;
 import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.Data;
 import okhttp3.*;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.http.entity.mime.FormBodyPartBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.stereotype.Component;
+import sun.plugin2.jvm.RemoteJVMLauncher;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.Charset;
-import java.security.KeyStore;
-import java.security.cert.CertificateFactory;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Component
 public class OkHttpUtils implements InitializingBean {
+    private Logger log = LoggerFactory.getLogger(OkHttpUtils.class);
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private OkHttpClient client;
+    
+    /**
+     * Post请求 仅URL参数与Headers
+     **/
+    public String syncSendPost(String url,
+                               HashMap<String, String> urlParam,
+                               HashMap<String, String> headers) {
+        return syncSendPost(createPostRequest(url, urlParam, headers, null, null, null));
+    }
 
     /**
-     * 发送Get请求
-     *
-     * @return
-     * @Author zhiliang
-     * @Date 2019/8/6
-     * @Email chenzl88@chinaunicom.cn
-     * @Param
+     * Post请求  URL参数Header与Json
      **/
-    public String sendGet(String url, HashMap<String, String> queryParam, Map<String, String> headers) throws IOException {
-        String realUrl = buildUrlWithQueryParam(url, queryParam);
+    public String syncSendPost(String url,
+                               HashMap<String, String> urlParam,
+                               HashMap<String, String> headers,
+                               JSONObject jsonBody) {
+        return syncSendPost(createPostRequest(url, urlParam, headers, jsonBody, null, null));
+    }
 
+    /**
+     * Post请求 FormData
+     **/
+    public String syncSendPost(String url,
+                               HashMap<String, String> urlParam,
+                               HashMap<String, String> headers,
+                               HashMap<String, String> formDataBody,
+                               List<FileItem> files) {
+        return syncSendPost(
+                createPostRequest(url, urlParam, headers, null, formDataBody, files)
+        );
+    }
+
+    /**
+     * 异步Post请求 仅URL参数与Headers
+     **/
+    public void asyncSendPost(String url,
+                              HashMap<String, String> urlParam,
+                              HashMap<String, String> headers,
+                              Callback callback) {
+        asyncSendPost(createPostRequest(url, urlParam, headers, null, null, null),
+                callback);
+    }
+
+    /**
+     * 异步 Post请求  URL参数Header与Json
+     **/
+    public void asyncSendPost(String url,
+                              HashMap<String, String> urlParam,
+                              HashMap<String, String> headers,
+                              JSONObject jsonBody,
+                              Callback callback) {
+        asyncSendPost(createPostRequest(url, urlParam, headers, jsonBody, null, null), callback);
+    }
+
+    /**
+     * Post请求 FormData
+     **/
+    public void asyncSendPost(String url,
+                              HashMap<String, String> urlParam,
+                              HashMap<String, String> headers,
+                              HashMap<String, String> formDataBody,
+                              List<FileItem> files,
+                              Callback callback) {
+        asyncSendPost(
+                createPostRequest(url, urlParam, headers, null, formDataBody, files), callback
+        );
+    }
+
+
+    /**
+     * 异步POST请求
+     **/
+    private void asyncSendPost(Request request, Callback callback) {
+        Call call = client.newCall(request);
+        call.enqueue(callback);
+    }
+
+    /**
+     * 同步POST请求
+     **/
+    private String syncSendPost(Request request) {
+        try {
+            Response response = client.newCall(request).execute();
+            return response.body().string();
+        } catch (IOException e) {
+            log.error("【网络请求失败】", e);
+            return null;
+        }
+    }
+
+    /**
+     * 构建Post请求的Request
+     **/
+    private Request createPostRequest(String url,
+                                      HashMap<String, String> urlParam,
+                                      HashMap<String, String> headers,
+                                      JSONObject jsonBody,
+                                      HashMap<String, String> formDataBody,
+                                      List<FileItem> files) {
+        //构造带信息的URL
+        String targetUrl = buildUrlWithQueryParam(url, urlParam);
+
+        //构造Request
         Request.Builder requestBuilder = new Request.Builder();
-        requestBuilder.get().url(realUrl);
         if (headers != null) {
-            headers.forEach((k, v) -> requestBuilder.addHeader(k, v));
+            //添加Header
+            headers.forEach(requestBuilder::addHeader);
         }
-        Request request = requestBuilder.build();
-        Response response = client.newCall(request).execute();
-        return new String(response.body().bytes(), Charset.defaultCharset());
-    }
-
-
-    public String sendFormPost(String url, HashMap<String,String> formParam) throws IOException{
-        return sendPost(ParamType.Form,url,null,formParam,null,null);
-    }
-    public String sendJsonPost(String url, JSONObject jsonParam) throws IOException{
-        return sendPost(ParamType.Json,url,null,null,jsonParam,null);
-    }
-    public String sendJsonPost(String url, HashMap<String,String> queryParam, JSONObject jsonParam) throws IOException{
-        return sendPost(ParamType.Json,url,queryParam,null,jsonParam,null);
-    }
-    public String sendFilePost(String url, List<FileBody> fileBody) throws IOException{
-        return sendPost(ParamType.FormData,url,null,null,null,fileBody);
-    }
-    public String sendFilePost(String url, HashMap<String,String> formParam, List<FileBody> fileBody) throws IOException{
-        return sendPost(ParamType.FormData,url,null,formParam,null,fileBody);
-    }
-
-
-
-
-    /**
-     * 发送Post请求
-     *
-     * @return
-     * @Author zhiliang
-     * @Date 2019/7/19
-     * @Email chenzl88@chinaunicom.cn
-     * @Param
-     **/
-    private String sendPost(ParamType type, String u, HashMap<String, String> queryParam, HashMap<String, String> formParam, JSONObject jsonParam, List<FileBody> fileBody) throws IOException {
-        //构建URL
-        String url = null;
-        if (queryParam != null) {
-            url = buildUrlWithQueryParam(u, queryParam);
-        } else {
-            url = url;
-        }
-        //构建RequestBody
+        //构造Body
         RequestBody body = null;
-        switch (type) {
-            case Json:
-                if (jsonParam == null || "".equals(jsonParam)) {
-                    throw new NullPointerException("JsonParam Cannot Be Null");
-                }
-                body = RequestBody.create(jsonParam.toJSONString(), JSON);
-                break;
-            case Form:
-                if (formParam == null) {
-                    throw new NullPointerException("FormParam Cannot Be Null");
-                }
-                FormBody.Builder formBodyBuilder = new FormBody.Builder();
-                formParam.forEach((k, v) -> formBodyBuilder.addEncoded(k, v));
-                body = formBodyBuilder.build();
-                break;
-            case FormData:
-                MultipartBody.Builder multipartBuilder = new MultipartBody.Builder();
-                multipartBuilder.setType(MultipartBody.FORM);
-                if (formParam != null) {
-                    formParam.forEach((k, v) -> multipartBuilder.addFormDataPart(k, v));
-                }
-                if (fileBody != null) {
-                    fileBody.forEach(i -> {
-                        multipartBuilder.addFormDataPart(
-                                i.getName(),
-                                i.getFileName(),
-                                RequestBody.create(i.getFile(), i.getMediaType())
-                        );
-                    });
-                }
-                body = multipartBuilder.build();
-                break;
-            default:
-                throw new NullPointerException("ParamType Cannot Be Null");
+        if (jsonBody != null) {
+            body = RequestBody.create(jsonBody.toJSONString(), JSON);
+        } else {
+            MultipartBody.Builder multipartBodyBuilder = new MultipartBody.Builder();
+            if (formDataBody != null) {
+                formDataBody.forEach(multipartBodyBuilder::addFormDataPart);
+            }
+            if (files != null) {
+                files.forEach(i -> {
+                    multipartBodyBuilder.addFormDataPart(
+                            i.getParamName(),
+                            i.getFileName(),
+                            RequestBody.create(i.getFile(), i.getFileType())
+                    );
+                });
+            }
         }
-        //构建Request
-        Request.Builder requestBuilder = new Request.Builder();
-        Request request = requestBuilder.post(body).url(url).build();
-        //执行
-        Response response = client.newCall(request).execute();
-        return new String(response.body().bytes(), Charset.defaultCharset());
+        if (body == null) {
+            body = RequestBody.create(new byte[]{}, null);
+        }
+        return requestBuilder.url(targetUrl).post(body).build();
     }
-
 
     /**
      * 将信息带在Url后面
@@ -138,6 +161,9 @@ public class OkHttpUtils implements InitializingBean {
     private String buildUrlWithQueryParam(String url, HashMap<String, String> params) {
         if (params == null || params.isEmpty()) {
             return url;
+        }
+        if (url.contains("?")) {
+            throw new IllegalArgumentException("传入的URL后不要携带参数");
         }
         StringBuffer sb = new StringBuffer(url);
         sb.append("?");
@@ -149,8 +175,33 @@ public class OkHttpUtils implements InitializingBean {
                     .append("&");
         });
         sb.deleteCharAt(sb.length() - 1);
+        //TODO 校验最大长度
         return sb.toString();
     }
+
+
+    /**
+     * 文件请求的类,用于上传文件
+     *
+     * @Author zhiliang
+     * @Date 2019/11/6
+     * @Email chenzl88@chinaunicom.cn
+     * @Param
+     * @return
+     **/
+    @AllArgsConstructor
+    @Data
+    class FileItem {
+        private String paramName;
+
+        private String fileName;
+
+        private File file;
+
+        private MediaType fileType;
+
+    }
+
 
     @Override
     public void afterPropertiesSet() throws Exception {
@@ -160,35 +211,8 @@ public class OkHttpUtils implements InitializingBean {
         builder.callTimeout(5, TimeUnit.SECONDS);
         builder.readTimeout(20, TimeUnit.SECONDS);
         builder.writeTimeout(20, TimeUnit.SECONDS);
-        /** https请求设置 **/
-        setCertificates(builder);
         client = builder.build();
     }
 
-    /**
-     * 设置证书
-     **/
-    private void setCertificates(OkHttpClient.Builder builder) throws Exception {
-        CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
-        KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
-        keyStore.load(null);
-        int index = 0;
-        // TODO 读取证书
-    }
 
-    /**
-     * Post请求参数枚举类
-     **/
-    enum ParamType {
-        Json, Form, FormData
-    }
-
-    @Getter
-    @AllArgsConstructor
-    class FileBody {
-        private String name;
-        private String fileName;
-        private File file;
-        private MediaType mediaType;
-    }
 }
