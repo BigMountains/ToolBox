@@ -1,5 +1,6 @@
 package com.czl.tools;
 
+import com.alibaba.fastjson.JSON;
 import com.czl.tools.dynamic_datasource.Domain;
 import com.czl.tools.dynamic_datasource.mapper.MyMapper;
 import org.junit.Test;
@@ -15,7 +16,7 @@ public class DynamicDataSoutceTest extends ToolsApplicationTests {
     @Test
     public void test(){
         Domain result = mapper.selectAll();
-        System.out.println(1);
+        System.out.println(JSON.toJSONString(result));
 
 
     }
