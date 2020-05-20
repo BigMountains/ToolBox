@@ -1,218 +1,158 @@
 package com.czl.tools.utils;
 
+import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
-import lombok.AllArgsConstructor;
-import lombok.Data;
+import com.google.common.collect.HashMultimap;
 import okhttp3.*;
+import org.apache.http.client.methods.RequestBuilder;
+import org.apache.http.conn.ConnectTimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.InitializingBean;
-import org.springframework.stereotype.Component;
-import sun.plugin2.jvm.RemoteJVMLauncher;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.util.HashMap;
-import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-@Component
-public class OkHttpUtils implements InitializingBean {
-    private Logger log = LoggerFactory.getLogger(OkHttpUtils.class);
-    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
-    private OkHttpClient client;
-    
+public class OkHttpUtils {
+    private static Logger log = LoggerFactory.getLogger(OkHttpUtils.class);
+
+
+    private static final MediaType URLENCODED = MediaType.parse("application/x-www-form-urlencoded;charset=utf-8");
+
+    private static final MediaType JSON = MediaType.parse("application/json;charset=utf-8");
+
+    private static final MediaType FORM_DATA = MediaType.parse("application/form-data;charset=utf-8");
+
+    private static final MediaType FILE = MediaType.parse("application/octet-stream");
     /**
-     * Post请求 仅URL参数与Headers
-     **/
-    public String syncSendPost(String url,
-                               HashMap<String, String> urlParam,
-                               HashMap<String, String> headers) {
-        return syncSendPost(createPostRequest(url, urlParam, headers, null, null, null));
+     * 持有一个客户端
+     */
+    private final static OkHttpClient client = new OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .callTimeout(5,TimeUnit.SECONDS)
+            .readTimeout(20,TimeUnit.SECONDS)
+            .writeTimeout(20,TimeUnit.SECONDS)
+            .build();
+
+
+    /**
+     * 发送Get请求
+     * @param url
+     * @param params
+     * @param headers
+     * @return
+     */
+    public static String get(String url, JSONObject params, JSONObject headers){
+        return doGet(url,params,headers);
     }
 
     /**
-     * Post请求  URL参数Header与Json
-     **/
-    public String syncSendPost(String url,
-                               HashMap<String, String> urlParam,
-                               HashMap<String, String> headers,
-                               JSONObject jsonBody) {
-        return syncSendPost(createPostRequest(url, urlParam, headers, jsonBody, null, null));
+     * 使用UrlEncoded编码发送
+     * @param url
+     * @param query
+     * @return
+     */
+    public static String post(String url,JSONObject query,JSONObject header){
+        return doPost(url,query,null,URLENCODED,header);
     }
 
     /**
-     * Post请求 FormData
-     **/
-    public String syncSendPost(String url,
-                               HashMap<String, String> urlParam,
-                               HashMap<String, String> headers,
-                               HashMap<String, String> formDataBody,
-                               List<FileItem> files) {
-        return syncSendPost(
-                createPostRequest(url, urlParam, headers, null, formDataBody, files)
-        );
+     * 使用Json格式发出
+     * @param url
+     * @param body
+     * @param header
+     * @return
+     */
+    public static String postJson(String url,JSONObject body,JSONObject header){
+        return doPost(url,body,null,JSON,header);
     }
 
     /**
-     * 异步Post请求 仅URL参数与Headers
-     **/
-    public void asyncSendPost(String url,
-                              HashMap<String, String> urlParam,
-                              HashMap<String, String> headers,
-                              Callback callback) {
-        asyncSendPost(createPostRequest(url, urlParam, headers, null, null, null),
-                callback);
-    }
-
-    /**
-     * 异步 Post请求  URL参数Header与Json
-     **/
-    public void asyncSendPost(String url,
-                              HashMap<String, String> urlParam,
-                              HashMap<String, String> headers,
-                              JSONObject jsonBody,
-                              Callback callback) {
-        asyncSendPost(createPostRequest(url, urlParam, headers, jsonBody, null, null), callback);
-    }
-
-    /**
-     * Post请求 FormData
-     **/
-    public void asyncSendPost(String url,
-                              HashMap<String, String> urlParam,
-                              HashMap<String, String> headers,
-                              HashMap<String, String> formDataBody,
-                              List<FileItem> files,
-                              Callback callback) {
-        asyncSendPost(
-                createPostRequest(url, urlParam, headers, null, formDataBody, files), callback
-        );
+     * 发送FormData 可发送文件
+     * @param url
+     * @param bodyParams
+     * @return
+     */
+    public static String postFile(String url,HashMap<String,Object> bodyParams,JSONObject headers){
+        return doPost(url,null,bodyParams,FORM_DATA,headers);
     }
 
 
-    /**
-     * 异步POST请求
-     **/
-    private void asyncSendPost(Request request, Callback callback) {
-        Call call = client.newCall(request);
-        call.enqueue(callback);
-    }
 
-    /**
-     * 同步POST请求
-     **/
-    private String syncSendPost(Request request) {
+    private static String doGet(String url, JSONObject params, JSONObject headers) {
+        Request.Builder reqBuilder = new Request.Builder();
+        reqBuilder.get();
+        //设置请求头
+        if(headers != null){
+            headers.forEach((k,v)-> reqBuilder.addHeader(k,(String)v));
+        }
+        //设置参数  构造Url参数
+        StringBuilder sb = new StringBuilder(url);
+        sb.append("?");
+        params.forEach((k,v)->{
+            sb.append(k).append("=").append((String)v).append("&");
+        });
+        sb.deleteCharAt(sb.length()-1);
+        reqBuilder.url(sb.toString());
         try {
-            Response response = client.newCall(request).execute();
+            Response response = client.newCall(reqBuilder.build()).execute();
             return response.body().string();
-        } catch (IOException e) {
-            log.error("【网络请求失败】", e);
+        }catch (IOException e){
+            log.error("http get request failed reason:",e);
             return null;
         }
     }
 
     /**
-     * 构建Post请求的Request
-     **/
-    private Request createPostRequest(String url,
-                                      HashMap<String, String> urlParam,
-                                      HashMap<String, String> headers,
-                                      JSONObject jsonBody,
-                                      HashMap<String, String> formDataBody,
-                                      List<FileItem> files) {
-        //构造带信息的URL
-        String targetUrl = buildUrlWithQueryParam(url, urlParam);
-
-        //构造Request
-        Request.Builder requestBuilder = new Request.Builder();
-        if (headers != null) {
-            //添加Header
-            headers.forEach(requestBuilder::addHeader);
+     * Post请求
+     * @return
+     */
+    private static String doPost(String url, JSONObject bodyParam, HashMap<String,Object> formData, MediaType type,JSONObject headers) {
+        Request.Builder reqBuilder = new Request.Builder();
+        //设置Url
+        reqBuilder.url(url);
+        //设置Header
+        if(headers != null){
+            headers.forEach((k,v)-> reqBuilder.addHeader(k,(String)v));
         }
         //构造Body
         RequestBody body = null;
-        if (jsonBody != null) {
-            body = RequestBody.create(jsonBody.toJSONString(), JSON);
-        } else {
-            MultipartBody.Builder multipartBodyBuilder = new MultipartBody.Builder();
-            if (formDataBody != null) {
-                formDataBody.forEach(multipartBodyBuilder::addFormDataPart);
-            }
-            if (files != null) {
-                files.forEach(i -> {
-                    multipartBodyBuilder.addFormDataPart(
-                            i.getParamName(),
-                            i.getFileName(),
-                            RequestBody.create(i.getFile(), i.getFileType())
-                    );
-                });
-            }
+        //判断type参数  设置Body
+        if (JSON.equals(type)) {
+            body = RequestBody.create(bodyParam.toJSONString(),JSON);
+        } else if (URLENCODED.equals(type)) {
+            StringBuilder sb = new StringBuilder();
+            bodyParam.forEach((k,v)-> sb.append(k).append("=").append((String)v).append("&"));
+            sb.deleteCharAt(sb.length()-1);
+            body = RequestBody.create(sb.toString(),URLENCODED);
+        } else if (FORM_DATA.equals(type)) {
+            MultipartBody.Builder bodyBuilder = new MultipartBody.Builder();
+            bodyParam.forEach((k,v)-> {
+                if(v instanceof File){
+                    bodyBuilder.addFormDataPart(k,((File)v).getName(),
+                            RequestBody.Companion.create((File)v,FILE));
+                }else{
+                    bodyBuilder.addFormDataPart(k,(String)v);
+                }
+            });
+        } else{
+            throw new IllegalArgumentException("unknown mediaType");
         }
-        if (body == null) {
-            body = RequestBody.create(new byte[]{}, null);
+        reqBuilder.post(body);
+        try {
+            Response response = client.newCall(reqBuilder.build()).execute();
+            return response.body().string();
+        }catch (IOException e){
+            log.error("http post request failed reason:",e);
+            return null;
         }
-        return requestBuilder.url(targetUrl).post(body).build();
-    }
-
-    /**
-     * 将信息带在Url后面
-     **/
-    private String buildUrlWithQueryParam(String url, HashMap<String, String> params) {
-        if (params == null || params.isEmpty()) {
-            return url;
-        }
-        if (url.contains("?")) {
-            throw new IllegalArgumentException("传入的URL后不要携带参数");
-        }
-        StringBuffer sb = new StringBuffer(url);
-        sb.append("?");
-        params.forEach((k, v) -> {
-            sb
-                    .append(k)
-                    .append("=")
-                    .append(com.alibaba.fastjson.JSON.toJSONString(v))
-                    .append("&");
-        });
-        sb.deleteCharAt(sb.length() - 1);
-        //TODO 校验最大长度
-        return sb.toString();
     }
 
 
-    /**
-     * 文件请求的类,用于上传文件
-     *
-     * @Author zhiliang
-     * @Date 2019/11/6
-     * @Email chenzl88@chinaunicom.cn
-     * @Param
-     * @return
-     **/
-    @AllArgsConstructor
-    @Data
-    class FileItem {
-        private String paramName;
 
-        private String fileName;
-
-        private File file;
-
-        private MediaType fileType;
-
-    }
-
-
-    @Override
-    public void afterPropertiesSet() throws Exception {
-        OkHttpClient.Builder builder = new OkHttpClient.Builder();
-        /** 设置超时时间 **/
-        builder.connectTimeout(5, TimeUnit.SECONDS);
-        builder.callTimeout(5, TimeUnit.SECONDS);
-        builder.readTimeout(20, TimeUnit.SECONDS);
-        builder.writeTimeout(20, TimeUnit.SECONDS);
-        client = builder.build();
-    }
 
 
 }
